@@ -57,3 +57,6 @@ real    0m4.366s
 user    0m0.871s
 sys     0m2.336s
 ```
+
+![image](https://github.com/user-attachments/assets/8d60e29c-6195-44a4-9bca-0e546041dc5b)
+
