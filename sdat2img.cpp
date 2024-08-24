@@ -303,6 +303,9 @@ FileSizeT TransferList::max() {
 #endif
   std::cout << std::endl;
   std::cout << "    <system_img>: output system image" << std::endl;
+  std::cout << "If you are lazy, then just provide directory and filename, I "
+               "will try to auto detect them."
+            << std::endl;
   exit(EXIT_SUCCESS);
 }
 
@@ -407,17 +410,42 @@ private:
 int main(int argc, const char *argv[]) {
   std::filesystem::path transfer_list_file, new_dat_file, output_img;
   int block_count;
+  std::error_code ec;
 
   if (argc != 4 && argc != 3) {
     usage(argv[0]);
   }
 
-  transfer_list_file = argv[1];
-  new_dat_file = argv[2];
-  if (argc == 3) {
-    output_img = DEFAULT_OUTPUT;
-  } else {
-    output_img = argv[3];
+  // Scheme 1. The user provides all files
+  if (std::filesystem::is_regular_file(argv[1], ec)) {
+    transfer_list_file = argv[1];
+    new_dat_file = argv[2];
+    if (argc == 3) {
+      output_img = DEFAULT_OUTPUT;
+    } else {
+      output_img = argv[3];
+    }
+  }
+
+  // Scheme 2. The user provides a directory and filename
+  else if (const std::filesystem::path dirObj = argv[1];
+      std::filesystem::is_directory(dirObj)) {
+    const std::string commonPrefix = argv[2];
+    transfer_list_file = dirObj / (commonPrefix + ".transfer.list");
+    new_dat_file = dirObj / (commonPrefix + ".dat");
+    if (!std::filesystem::exists(new_dat_file)) {
+      new_dat_file = dirObj / (commonPrefix + ".new.dat.br");
+    }
+    if (argc == 3) {
+      output_img = dirObj / (commonPrefix + ".img");
+    } else {
+      output_img = argv[3];
+    }
+  }
+
+  // Else, invalid arguments
+  else {
+    usage(argv[0]);
   }
 
 #ifdef HAVE_BROTLI
@@ -427,13 +455,11 @@ int main(int argc, const char *argv[]) {
               << " is not a valid Brotli-compressed file." << std::endl;
   } else {
     std::cout << "Decompressing Brotli-compressed file to "
-              << new_dat_file.replace_extension() << " ...";
+              << new_dat_file.replace_extension() << " ... ";
     // Remove the excepted .br suffix
-    if (!brotli_manager.decompress(new_dat_file.replace_extension())) {
-      std::cerr << "Failed." << std::endl;
+    if (!brotli_manager.decompress(new_dat_file)) {
       return EXIT_FAILURE;
     }
-    std::cout << "Done." << std::endl;
   }
 #endif
 
@@ -446,7 +472,6 @@ int main(int argc, const char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  std::error_code ec;
   if (std::filesystem::exists(output_img, ec)) {
     std::cerr << "Error: The output file " << output_img << " already exists."
               << std::endl;
