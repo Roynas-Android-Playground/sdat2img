@@ -22,6 +22,10 @@
 #include <utility>
 #include <vector>
 
+#ifdef HAVE_BROTLI
+#include <brotli/decode.h>
+#endif
+
 constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
 constexpr static int BLOCK_SIZE = 4096;
 using FileSizeT = long;
@@ -292,10 +296,112 @@ FileSizeT TransferList::max() {
   std::cout << "Usage: " << exe
             << " <transfer_list> <system_new_file> <system_img>" << std::endl;
   std::cout << "    <transfer_list>: transfer list file" << std::endl;
-  std::cout << "    <system_new_file>: system new dat file" << std::endl;
+  std::cout << "    <system_new_file>: system new dat file ";
+#ifdef HAVE_BROTLI
+  std::cout << "(Can support brotli compressed)";
+#endif
+  std::cout << std::endl;
   std::cout << "    <system_img>: output system image" << std::endl;
   exit(EXIT_SUCCESS);
 }
+
+#ifdef HAVE_BROTLI
+
+class BrotliManager {
+public:
+  BrotliManager(const std::filesystem::path &input_file)
+      : file_path(input_file) {}
+
+  bool isValidBrotli() const {
+    // TODO: Check actual, for now we are doing the same as the brotli executable does
+    // Checking the br file extension.
+    return file_path.filename().extension() == ".br";
+  }
+  bool decompress(const std::filesystem::path &output_file) const {
+    // Open the input file in binary mode
+    std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+
+    if (!file.is_open()) {
+      std::cerr << "Error opening input file: " << file_path << std::endl;
+      return false;
+    }
+
+    // Get the size of the file and read the content
+    std::ifstream::pos_type file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    std::vector<uint8_t> compressed_data(file_size);
+    file.read(reinterpret_cast<char *>(compressed_data.data()), file_size);
+
+    if (!file) {
+      std::cerr << "Error reading input file: " << file_path << std::endl;
+      return false;
+    }
+
+    // Initialize the Brotli decoder
+    BrotliDecoderState *state =
+        BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
+    if (!state) {
+      std::cerr << "Error creating Brotli decoder state." << std::endl;
+      return false;
+    }
+
+    // Prepare output file
+    std::ofstream output(output_file, std::ios::binary);
+    if (!output.is_open()) {
+      std::cerr << "Error opening output file: " << output_file << std::endl;
+      BrotliDecoderDestroyInstance(state);
+      return false;
+    }
+
+    // Decompression buffer
+    const size_t kBufferSize = 4096;
+    std::vector<uint8_t> output_buffer(kBufferSize);
+
+    size_t input_pos = 0;
+    size_t available_out = kBufferSize;
+    uint8_t *output_ptr = output_buffer.data();
+
+    // Decompress the data
+    BrotliDecoderResult result = BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT;
+
+    while (result != BROTLI_DECODER_RESULT_SUCCESS &&
+           result != BROTLI_DECODER_RESULT_ERROR) {
+      size_t available_in = compressed_data.size() - input_pos;
+      const uint8_t *next_in = compressed_data.data() + input_pos;
+      result = BrotliDecoderDecompressStream(
+          state, &available_in, &next_in, &available_out, &output_ptr, nullptr);
+
+      // Write the decompressed data to the output file
+      if (output_ptr != output_buffer.data()) {
+        output.write(reinterpret_cast<char *>(output_buffer.data()),
+                     kBufferSize - available_out);
+        available_out = kBufferSize;
+        output_ptr = output_buffer.data();
+      }
+
+      // Move the input position
+      input_pos += (compressed_data.size() - available_in - input_pos);
+    }
+
+    // Final check for success
+    if (result == BROTLI_DECODER_RESULT_SUCCESS) {
+      std::cout << "Decompression successful." << std::endl;
+    } else {
+      std::cerr << "Decompression failed with error code: "
+                << BrotliDecoderGetErrorCode(state) << std::endl;
+    }
+
+    // Clean up
+    BrotliDecoderDestroyInstance(state);
+    return result == BROTLI_DECODER_RESULT_SUCCESS;
+  }
+
+private:
+  std::filesystem::path file_path;
+};
+
+#endif
 
 int main(int argc, const char *argv[]) {
   std::filesystem::path transfer_list_file, new_dat_file, output_img;
@@ -312,6 +418,21 @@ int main(int argc, const char *argv[]) {
   } else {
     output_img = argv[3];
   }
+
+#ifdef HAVE_BROTLI
+  BrotliManager brotli_manager(new_dat_file);
+  if (!brotli_manager.isValidBrotli()) {
+    std::cerr << "Warning: The input file " << new_dat_file
+              << " is not a valid Brotli-compressed file." << std::endl;
+  } else {
+    std::cout << "Decompressing Brotli-compressed file in-line... ";
+    if (!brotli_manager.decompress(new_dat_file)) {
+      std::cerr << "Failed." << std::endl;
+      return EXIT_FAILURE;
+    }
+    std::cout << "Done." << std::endl;
+  }
+#endif
 
   TransferList tlist;
 
@@ -376,5 +497,6 @@ int main(int argc, const char *argv[]) {
 
   std::filesystem::resize_file(output_img, max_file_size);
   std::cout << "Done! Output image: " << output_img << std::endl;
+
   return 0;
 }

@@ -1,0 +1,30 @@
+# CMake build directories
+/build/
+*/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Generated files
+*.sublime-project
+*.sublime-workspace
+*.user
+*.suo
+*.ncb
+*.sdf
+*.ipch
+*.pdb
+*.log
+*.tmp
+*.swp
+
+# IDE-specific files
+.vscode/
+.idea/
+*.iml
+
+# System files
+.DS_Store
+Thumbs.db
