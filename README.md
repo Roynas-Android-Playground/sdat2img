@@ -3,15 +3,11 @@ Convert sparse Android data image (.dat) into filesystem ext4 image (.img)
 
 This is a C++ equivalent of the original sdat2img tool, which was originally written in Python by xpirt, luxi78, and howellzhu.
 
-**Note:** newer Google's [Brotli](https://github.com/google/brotli) format (`system.new.dat.br`) must be decompressed to a valid sparse data image before using `sdat2img` binary.
-
 ## Requirements
-This project requires `clang` to build. Please ensure that `clang` is installed on your system before attempting to build the project.
+This project uses `libbrotli` to enable inline brotli decompression. Please ensure that `libbrotli-dev` is installed on your system to build the project (Recommended).
 
 ## Build
-```
-make
-```
+Quite straightforward as it uses CMake.
 
 ## Usage
 ```
@@ -21,7 +17,15 @@ make
 - `<system_new_file>` = input, system.new.dat from rom zip
 - `[system_img]` = output ext4 raw image file
 
+Or for lazy people:
+```
+./sdat2img <directory/to/extracted> <partition_name> [out_filename.img]
+```
+- `<directory/to/extracted>` = if you extract ROM zip to a folder, point to the directory
+- `<partition_name>` = Like system, vendor, etc...
+- `[out_filename.img]` = Optional output path of ext4 RAW image
 
+The program guesses the file names from the supplied directory and acts same as the first usage.
 
 ## Example
 This is a simple example on a Linux system: 
@@ -32,5 +36,6 @@ This is a simple example on a Linux system:
 - OR
 
 ```
-~$ ./sdat2img system.transfer.list system.new.dat
+~$ ./sdat2img LineageExtracted/ system
 ```
+Where LineageExtracted/ contains `system.new.dat(.br)` `system.transfer.list` and it would output to LineageExtracted/system.img (as inferred)
