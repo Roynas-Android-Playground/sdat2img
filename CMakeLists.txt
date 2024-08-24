@@ -14,3 +14,13 @@ if (Brotli_FOUND)
     add_compile_definitions(${PROJECT_NAME} -DHAVE_BROTLI)
     target_link_libraries(${PROJECT_NAME} Brotli::decoder)
 endif()
+
+include(CheckIPOSupported)
+check_ipo_supported(RESULT LTO_SUPPORTED OUTPUT LTO_ERROR)
+
+if(LTO_SUPPORTED)
+    message(STATUS "IPO / LTO enabled")
+    set_property(TARGET sdat2cpp PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(STATUS "IPO / LTO not supported: <${LTO_ERROR}>")
+endif()
