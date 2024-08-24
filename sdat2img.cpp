@@ -314,8 +314,8 @@ public:
       : file_path(input_file) {}
 
   bool isValidBrotli() const {
-    // TODO: Check actual, for now we are doing the same as the brotli executable does
-    // Checking the br file extension.
+    // TODO: Check actual, for now we are doing the same as the brotli
+    // executable does Checking the br file extension.
     return file_path.filename().extension() == ".br";
   }
   bool decompress(const std::filesystem::path &output_file) const {
@@ -426,8 +426,10 @@ int main(int argc, const char *argv[]) {
     std::cerr << "Warning: The input file " << new_dat_file
               << " is not a valid Brotli-compressed file." << std::endl;
   } else {
-    std::cout << "Decompressing Brotli-compressed file in-line... ";
-    if (!brotli_manager.decompress(new_dat_file)) {
+    std::cout << "Decompressing Brotli-compressed file to "
+              << new_dat_file.replace_extension() << " ...";
+    // Remove the excepted .br suffix
+    if (!brotli_manager.decompress(new_dat_file.replace_extension())) {
       std::cerr << "Failed." << std::endl;
       return EXIT_FAILURE;
     }
