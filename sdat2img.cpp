@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -28,7 +29,7 @@
 
 constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
 constexpr static int BLOCK_SIZE = 4096;
-using FileSizeT = long;
+using FileSizeT = size_t;
 
 // Represents the transfer.list file
 struct TransferList {
