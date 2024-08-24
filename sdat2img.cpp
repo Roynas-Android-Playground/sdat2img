@@ -1,175 +1,305 @@
 /*
- * This is a C++ equivalent version of the original sdat2img, which was originally written
- * in Python by xpirt, luxi78, and howellzhu.
+ * This is a C++ equivalent version of the original sdat2img, which was
+ * originally written in Python by xpirt, luxi78, and howellzhu.
  *
-*/
+ */
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
+#include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
-#define DEFAULT_OUTPUT "system.img"
-#define BLOCK_SIZE 4096
+constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
+constexpr static int BLOCK_SIZE = 4096;
+using FileSizeT = long;
 
-using namespace std;
-using ll = long long;
-using command_vector = vector<pair<string, vector<pair<int, int>>>>;
+// Represents the transfer.list file
+struct TransferList {
+  enum class Command { Erase, New, Zero };
+  struct ByteSegments;
+  using OperationsList = std::multimap<Command, ByteSegments>;
+  using ForEachCommand = std::function<void(Command, const ByteSegments &)>;
 
-vector<string> valid_cmds = {"erase", "new", "zero"};
+  struct ByteSegments {
+  private:
+    FileSizeT _begin;
+    FileSizeT _end;
 
-struct Data {
+  public:
+    ByteSegments(FileSizeT begin, FileSizeT end) : _begin(begin), _end(end) {}
+
+    void writeToFile(std::istream &in, std::ostream &out) const {
+      FileSizeT block_count = _end - _begin;
+      std::cout << "Copying " << block_count << " blocks into position "
+                << _begin << "..." << std::endl;
+      out.seekp(_begin * BLOCK_SIZE, std::ios::beg);
+      while (block_count > 0) {
+        std::array<char, BLOCK_SIZE> buffer{};
+        in.read(buffer.data(), BLOCK_SIZE);
+        out.write(buffer.data(), BLOCK_SIZE);
+        block_count--;
+      }
+    }
+
+    FileSizeT end() const noexcept { return _end; }
+    FileSizeT begin() const noexcept { return _begin; }
+    FileSizeT size() const noexcept { return _end - _begin; }
+  };
+
+private:
+  // Version of the transfer.list scheme.
   int version;
-  command_vector commands;
+  // Commands list
+  OperationsList commands;
+
+public:
+  // parser taking a transfer list file path.
+  void parse(const std::filesystem::path &transfer_list_file);
+  void forEachCommand(const ForEachCommand &callbacks);
+  FileSizeT max();
+
+  // Convert string to Operations, throwing an error if invalid.
+  static Command toOperations(const std::string &command) {
+    if (command == "erase") {
+      return Command::Erase;
+    } else if (command == "new") {
+      return Command::New;
+    } else if (command == "zero") {
+      return Command::Zero;
+    } else {
+      throw std::invalid_argument("Invalid operation: " + command);
+    }
+  }
 };
 
-bool file_exists(const string& filename) {
-  ifstream f(filename.data());
-  return f.good();
-}
-
-void check_cmd(const string& cmd) {
-  for (auto i : valid_cmds) {
-    if (i == cmd)
-      return;
+// std::ostream operator for TransferList::Command enum.
+std::ostream &operator<<(std::ostream &self,
+                         const TransferList::Command &operation) {
+  switch (operation) {
+  case TransferList::Command::Erase:
+    return self << "erase";
+  case TransferList::Command::New:
+    return self << "new";
+  case TransferList::Command::Zero:
+    return self << "zero";
   }
-  cerr << "'" << cmd << "' Is not a valid command." << endl;
-  exit(1);
+  return self;
 }
 
-vector<int> vector_string2int(const vector<string>& src) {
-  vector<int> tokens;
-  int token;
-  for (auto i : src) {
-    try {
-      token = stoi(i);
-    } catch (...) {
-      cerr << "Failed to convert string to int." << endl;
-      exit(1);
+// Declare a exception within file operations failure
+class IOException : public std::runtime_error {
+public:
+  explicit IOException(const std::filesystem::path &path,
+                       const std::string &message)
+      : std::runtime_error("Couldn't " + message + " file: " + path.string()) {}
+};
+
+// Represent a text file with lines
+struct TextFile {
+private:
+  std::ifstream file;
+  int line_num;
+  std::filesystem::path path;
+
+public:
+  explicit TextFile(const std::filesystem::path &path)
+      : file(path), line_num(0), path(path) {
+    if (!file.is_open()) {
+      throw IOException(path, "open");
     }
-    tokens.push_back(token);
   }
-  return tokens;
-}
 
-vector<string> split(const string &str, const char& delimiter) {
-  vector<string> tokens;
-  stringstream ss(str);
-  string token;
+  template <typename T = std::string> bool takeOneLine(T *out) {
+    std::string line;
+    std::stringstream stream;
+    if (!getline(file, line)) {
+      return false;
+    }
+    ++line_num;
+    if constexpr (std::is_same_v<T, std::string>) {
+      *out = line;
+      return true;
+    } else {
+      stream << line;
+      if (stream >> *out) {
+        return true;
+      }
+      std::cerr << "Couldn't convert line to type T";
+      return false;
+    }
+  }
+  void ignoreLine() {
+    std::string line;
+    if (getline(file, line)) {
+      ++line_num;
+    }
+  }
+  template <int X> void ignoreLine() {
+    for (int i = 0; i < X; ++i) {
+      ignoreLine();
+    }
+  }
+
+  std::string current() const noexcept {
+    std::stringstream stream;
+    stream << "Line " << line_num << " of file: " << path;
+    return stream.str();
+  }
+
+  // Disable move constructors
+  TextFile(TextFile &&) = delete;
+  TextFile &operator=(TextFile &&) = delete;
+};
+
+// Create exception with the TextFile object
+class TextFileError : public std::runtime_error {
+public:
+  explicit TextFileError(const TextFile &file, const std::string &message)
+      : std::runtime_error(message + ". Parser is at " + file.current()) {}
+};
+
+// Helper function like in GTest.
+template <typename IntT>
+void expected_eq(const std::string_view expection, const IntT l_op,
+                 const IntT r_op) {
+  std::cerr << "Expected " << expection << ", but " << l_op << " != " << r_op
+            << std::endl;
+}
+#define EXPECTED_EQ(l_op, r_op) expected_eq(#l_op " == " #r_op, l_op, r_op)
+#define ABORT_PARSING_IF(tfile, cond)                                          \
+  if ((cond)) {                                                                \
+    throw TextFileError(tfile,                                                 \
+                        "Couldn't parse line, " #cond " condition has met");   \
+  }
+
+std::vector<std::string> split(const std::string &str, const char &delimiter) {
+  std::vector<std::string> tokens;
+  std::stringstream ss(str);
+  std::string token;
   while (getline(ss, token, delimiter)) {
-    tokens.push_back(token);
+    tokens.emplace_back(token);
   }
   return tokens;
 }
 
-vector<int> rangeset(const string& src) {
-  vector<string> src_set = split(src, ',');
-  vector<int> num_set = vector_string2int(src_set);
-  vector<int> ret;
-  for (size_t i = 1; i < num_set.size(); i++) {
-    ret.push_back(num_set[i]);
+std::vector<FileSizeT> parseRanges(const std::string &src) {
+  std::vector<std::string> src_set = split(src, ',');
+  std::vector<FileSizeT> ret;
+
+  std::transform(src_set.begin(), src_set.end(), std::back_inserter(ret),
+                 [&src_set](const auto &src) {
+                   FileSizeT num;
+                   std::stringstream ss(src);
+                   if (!(ss >> num)) {
+                     throw std::invalid_argument(
+                         "Error parsing following data to rangeset: " + src);
+                   }
+                   return num;
+                 });
+  if (ret.size() != ret[0] + 1) {
+    EXPECTED_EQ(ret.size(), static_cast<size_t>(ret[0] + 1));
+    return {};
   }
-  if (num_set.size() != static_cast<size_t>(num_set[0] + 1) || ret.size() % 2 != 0) {
-    cerr << "Error on parsing following data to rangeset: " << src << endl;
-    exit(1);
+  if ((ret.size() - 1) % 2 != 0) {
+    EXPECTED_EQ(ret.size() % 2, static_cast<size_t>(0));
+    return {};
   }
+  // Remove first element
+  ret.erase(ret.begin());
   return ret;
 }
 
-Data parse_transfer_list(const string& transfer_list_file) {
-  int version;
-  string hold, line, cmd;
-  vector<int> nums;
-  command_vector commands;
-  Data result;
-
-  ifstream file(transfer_list_file);
-  if (!file.is_open()) {
-    perror("open");
-    exit(1);
-  }
+void TransferList::parse(const std::filesystem::path &transfer_list_file) {
+  std::string line;
+  std::vector<FileSizeT> nums;
+  TextFile transfer_list(transfer_list_file);
 
   // First line is the version
-  getline(file, hold);
-  try {
-    version = stoi(hold);
-  } catch (...) {
-    cerr << "Could not determine transfer list version." << endl;
-    exit(1);
+  if (!transfer_list.takeOneLine(&version)) {
+    throw TextFileError(transfer_list, "Failed to read version");
+  }
+  switch (version) {
+  case 1:
+    std::cout << "Android 5.0 detected" << std::endl;
+    break;
+  case 2:
+    std::cout << "Android 5.1 detected" << std::endl;
+    break;
+  case 3:
+    std::cout << "Android 6.x detected" << std::endl;
+    break;
+  case 4:
+    std::cout << "Android 7.x or above detected" << std::endl;
+    break;
+  default:
+    throw TextFileError(transfer_list,
+                        "Unknown version: " + std::to_string(version));
   }
 
   // Second line is total number of blocks. Ignore it though.
   // We are going to calculate it by ourselves.
-  getline(file, hold);
+  transfer_list.ignoreLine();
 
   // Skip those 2 lines if version >= 2
   if (version >= 2) {
-    getline(file, hold);
-    getline(file, hold);
+    transfer_list.ignoreLine<2>();
   }
 
   // Loop through all lines
-  while (file.peek() != EOF) {
-    getline(file, line);
-    vector<string> split_line = split(line, ' ');
-    if (split_line.size() != 2) { // We expect the command and the magic numbers
-      cerr << "Failed to parse line '" << line << "'" << endl;
-      exit(1);
-    }
-    cmd = split_line[0];
-    check_cmd(cmd);
-    nums = rangeset(split_line[1]);
-    vector<pair<int, int>> pairs;
+  while (transfer_list.takeOneLine(&line)) {
+    const auto &split_line = split(line, ' ');
+    ABORT_PARSING_IF(transfer_list, split_line.size() != 2);
+    nums = parseRanges(split_line[1]);
+    ABORT_PARSING_IF(transfer_list, nums.empty());
+
     for (size_t i = 0; i < nums.size(); i += 2) {
-      pairs.push_back(make_pair(nums[i], nums[i + 1])); // Build our pairs
+      commands.emplace(toOperations(split_line[0]),
+                       TransferList::ByteSegments(nums[i], nums[i + 1]));
     }
-    commands.push_back(make_pair(cmd, pairs)); // Push the cmd and our pairs to commands
   }
-
-  file.close();
-
-  result.version = version;
-  result.commands = commands;
-
-  return result;
+  std::cout << "Parsed " << commands.size() << " commands" << std::endl;
 }
 
-void resize_file(const string& path, const ll& new_size) {
-  ll size;
-
-  fstream file(path.data(), ios::in | ios::out | ios::binary);
-  if (!file) {
-    cerr << "Error resizing file." << endl;
-    exit(1);
+void TransferList::forEachCommand(const ForEachCommand &callbacks) {
+  // Commands is reversed, so we need to use cbegin, cend
+  for (const auto &it : commands) {
+    callbacks(it.first, it.second);
   }
-  file.seekg(0, ios::end);
-  size = file.tellg();
-  file.seekg(0, ios::beg);
-  if (size < new_size) { // Only resize if needed.
-    file.seekp(new_size - 1);
-    file.put('\0');
-  }
-  file.close();
 }
 
-void usage(const char *exe) {
-  cout << "Usage: " << exe << " <transfer_list> <system_new_file> <system_img>"
-       << endl;
-  cout << "    <transfer_list>: transfer list file" << endl;
-  cout << "    <system_new_file>: system new dat file" << endl;
-  cout << "    <system_img>: output system image" << endl;
-  cout << "Visit xda thread for more information." << endl;
-  exit(1);
+FileSizeT TransferList::max() {
+  return std::max_element(commands.begin(), commands.end(),
+                          [](const auto &a, const auto &b) {
+                            return a.second.end() < b.second.end();
+                          })
+      ->second.end();
+}
+
+[[noreturn]] void usage(const char *exe) {
+  std::cout << "Usage: " << exe
+            << " <transfer_list> <system_new_file> <system_img>" << std::endl;
+  std::cout << "    <transfer_list>: transfer list file" << std::endl;
+  std::cout << "    <system_new_file>: system new dat file" << std::endl;
+  std::cout << "    <system_img>: output system image" << std::endl;
+  exit(EXIT_SUCCESS);
 }
 
 int main(int argc, const char *argv[]) {
-  ll max_file_size;
-  string cmd, transfer_list_file, new_dat_file, output_img;
-  int block_count, begin, end, version, max_second;
-  char buffer[BLOCK_SIZE];
+  std::filesystem::path transfer_list_file, new_dat_file, output_img;
+  int block_count;
 
   if (argc != 4 && argc != 3) {
     usage(argv[0]);
@@ -178,89 +308,73 @@ int main(int argc, const char *argv[]) {
   transfer_list_file = argv[1];
   new_dat_file = argv[2];
   if (argc == 3) {
-      output_img = DEFAULT_OUTPUT;
+    output_img = DEFAULT_OUTPUT;
   } else {
-      output_img = argv[3];
+    output_img = argv[3];
   }
 
-  Data parsed = parse_transfer_list(transfer_list_file);
-  command_vector commands = parsed.commands;
-  version = parsed.version;
+  TransferList tlist;
 
-  if (version == 1) {
-    cout << "Android 5.0 detected!" << endl;
-  } else if (version == 2) {
-    cout << "Android 5.1 detected!" << endl;
-  } else if (version == 3) {
-    cout << "Android 6.x detected!" << endl;
-  } else if (version == 4) {
-    cout << "Android 7.x or above detected!" << endl;
-  } else {
-    cout << "Unknown Android version!" << endl;
+  try {
+    tlist.parse(transfer_list_file);
+  } catch (const std::exception &e) {
+    std::cerr << "Error: " << e.what() << std::endl;
+    return EXIT_FAILURE;
   }
 
-  if (file_exists(output_img)) {
-    cerr << "Error: The output file '" << output_img << "' already exists."
-         << endl;
-    cerr << "Remove it, rename it, or choose a different file name." << endl;
-    return 1;
-  }
+  std::error_code ec;
+  if (std::filesystem::exists(output_img, ec)) {
+    std::cerr << "Error: The output file " << output_img << " already exists."
+              << std::endl;
 
-  ofstream output(output_img, ios::binary);
-  if (!output) {
-    cerr << "Error: Could not open file " << output_img << endl;
-    return 1;
-  }
-
-  ifstream input_dat(new_dat_file, ios::binary);
-  if (!input_dat) {
-    cerr << "Error: Could not open file " << new_dat_file << endl;
-    return 1;
-  }
-
-  vector<pair<int, int>> all_block_sets;
-  vector<pair<int, int>> cur_set;
-  for (size_t j = 0; j < commands.size(); j++) {
-    cur_set = commands[j].second;
-    for (size_t i = 0; i < cur_set.size(); i++) {
-      all_block_sets.push_back(cur_set[i]);
-    }
-  }
-
-  max_second = 0;
-  for (const auto &pair : all_block_sets) {
-    if (pair.second > max_second) {
-      max_second = pair.second;
-    }
-  }
-
-  max_file_size = max_second * BLOCK_SIZE;
-
-  for (auto p : commands) {
-    cmd = p.first;
-    if (cmd == "new") {
-      for (auto block : p.second) {
-        begin = block.first;
-        end = block.second;
-        block_count = end - begin;
-        cout << "Copying " << block_count << " blocks into position " << begin
-             << "..." << endl;
-        output.seekp(begin * BLOCK_SIZE, ios::beg);
-        while (block_count > 0) {
-          input_dat.read(buffer, BLOCK_SIZE);
-          output.write(buffer, BLOCK_SIZE);
-          block_count--;
-        }
-      }
+    std::cout << "Do you want to overwrite it? (y/N): ";
+    std::string answer;
+    std::cin >> answer;
+    if (answer != "y" && answer != "Y") {
+      std::cerr << "Aborting..." << std::endl;
+      return EXIT_FAILURE;
     } else {
-      cout << "Skipping command " << cmd << "..." << endl;
+      std::filesystem::remove(output_img, ec);
+      if (ec) {
+        std::cerr << "Error: Could not remove file " << output_img << ": "
+                  << ec.message() << std::endl;
+        return EXIT_FAILURE;
+      }
     }
   }
+
+  std::ofstream output(output_img, std::ios::binary);
+  if (!output) {
+    std::cerr << "Error: Could not open file " << output_img << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  std::ifstream input_dat(new_dat_file, std::ios::binary);
+  if (!input_dat) {
+    std::cerr << "Error: Could not open file " << new_dat_file << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // Calculate total number of blocks
+  FileSizeT max_file_size = tlist.max() * BLOCK_SIZE;
+  std::cout << "New file size: " << max_file_size << " bytes" << std::endl;
+
+  tlist.forEachCommand([&](const TransferList::Command c,
+                           const TransferList::ByteSegments &seg) {
+    switch (c) {
+    case TransferList::Command::New: {
+      seg.writeToFile(input_dat, output);
+      break;
+    }
+    default:
+      std::cout << "Skipping command " << c << "..." << std::endl;
+    }
+  });
 
   output.close();
   input_dat.close();
 
-  resize_file(output_img, max_file_size);
-  cout << "Done! Output image: " << output_img << endl;
+  std::filesystem::resize_file(output_img, max_file_size);
+  std::cout << "Done! Output image: " << output_img << std::endl;
   return 0;
 }
