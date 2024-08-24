@@ -39,3 +39,21 @@ This is a simple example on a Linux system:
 ~$ ./sdat2img LineageExtracted/ system
 ```
 Where LineageExtracted/ contains `system.new.dat(.br)` `system.transfer.list` and it would output to LineageExtracted/system.img (as inferred)
+
+## Performance and comparison with Python implementation
+- Python: 150 lines
+- C++: 530 lines
+
+C++ (Around x3.5 faster):
+```
+real    0m1.278s
+user    0m0.086s
+sys     0m1.102s
+```
+
+Python:
+```
+real    0m4.366s
+user    0m0.871s
+sys     0m2.336s
+```
