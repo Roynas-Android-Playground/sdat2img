@@ -432,7 +432,7 @@ int main(int argc, const char *argv[]) {
       std::filesystem::is_directory(dirObj)) {
     const std::string commonPrefix = argv[2];
     transfer_list_file = dirObj / (commonPrefix + ".transfer.list");
-    new_dat_file = dirObj / (commonPrefix + ".dat");
+    new_dat_file = dirObj / (commonPrefix + ".new.dat");
     if (!std::filesystem::exists(new_dat_file)) {
       new_dat_file = dirObj / (commonPrefix + ".new.dat.br");
     }
