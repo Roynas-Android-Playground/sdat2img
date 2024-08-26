@@ -31,6 +31,16 @@ constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
 constexpr static int BLOCK_SIZE = 4096;
 using FileSizeT = size_t;
 
+// Define likely/unlikely based on the compiler used
+// FOR MAX PERFORMANCE
+#if defined(__GNUC__) || defined(__clang__)
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+#define likely(x) (x)
+#define unlikely(x) (x)
+#endif
+
 // Represents the transfer.list file
 struct TransferList {
   enum class Command { Erase, New, Zero };
@@ -73,7 +83,7 @@ private:
 public:
   // parser taking a transfer list file path.
   void parse(const std::filesystem::path &transfer_list_file);
-  void forEachCommand(const ForEachCommand &callbacks);
+  inline void forEachCommand(const ForEachCommand &callbacks);
   FileSizeT max();
 
   // Convert string to Operations, throwing an error if invalid.
@@ -122,7 +132,7 @@ private:
 public:
   explicit TextFile(const std::filesystem::path &path)
       : file(path), line_num(0), path(path) {
-    if (!file.is_open()) {
+    if (unlikely(!file.is_open())) {
       throw IOException(path, "open");
     }
   }
@@ -130,7 +140,7 @@ public:
   template <typename T = std::string> bool takeOneLine(T *out) {
     std::string line;
     std::stringstream stream;
-    if (!getline(file, line)) {
+    if (unlikely(!getline(file, line))) {
       return false;
     }
     ++line_num;
@@ -139,7 +149,7 @@ public:
       return true;
     } else {
       stream << line;
-      if (stream >> *out) {
+      if (likely(stream >> *out)) {
         return true;
       }
       std::cerr << "Couldn't convert line to type T";
@@ -148,7 +158,7 @@ public:
   }
   void ignoreLine() {
     std::string line;
-    if (getline(file, line)) {
+    if (likely(getline(file, line))) {
       ++line_num;
     }
   }
@@ -178,19 +188,20 @@ public:
 
 // Helper function like in GTest.
 template <typename IntT>
-void expected_eq(const std::string_view expection, const IntT l_op,
-                 const IntT r_op) {
+inline void expected_eq(const std::string_view expection, const IntT l_op,
+                        const IntT r_op) {
   std::cerr << "Expected " << expection << ", but " << l_op << " != " << r_op
             << std::endl;
 }
 #define EXPECTED_EQ(l_op, r_op) expected_eq(#l_op " == " #r_op, l_op, r_op)
 #define ABORT_PARSING_IF(tfile, cond)                                          \
-  if ((cond)) {                                                                \
+  if (unlikely((cond))) {                                                      \
     throw TextFileError(tfile,                                                 \
                         "Couldn't parse line, " #cond " condition has met");   \
   }
 
-std::vector<std::string> split(const std::string &str, const char &delimiter) {
+inline std::vector<std::string> split(const std::string &str,
+                                      const char &delimiter) {
   std::vector<std::string> tokens;
   std::stringstream ss(str);
   std::string token;
@@ -208,17 +219,17 @@ std::vector<FileSizeT> parseRanges(const std::string &src) {
                  [&src_set](const auto &src) {
                    FileSizeT num;
                    std::stringstream ss(src);
-                   if (!(ss >> num)) {
+                   if (unlikely(!(ss >> num))) {
                      throw std::invalid_argument(
                          "Error parsing following data to rangeset: " + src);
                    }
                    return num;
                  });
-  if (ret.size() != ret[0] + 1) {
+  if (unlikely(ret.size() != ret[0] + 1)) {
     EXPECTED_EQ(ret.size(), static_cast<size_t>(ret[0] + 1));
     return {};
   }
-  if ((ret.size() - 1) % 2 != 0) {
+  if (unlikely((ret.size() - 1) % 2 != 0)) {
     EXPECTED_EQ(ret.size() % 2, static_cast<size_t>(0));
     return {};
   }
@@ -233,7 +244,7 @@ void TransferList::parse(const std::filesystem::path &transfer_list_file) {
   TextFile transfer_list(transfer_list_file);
 
   // First line is the version
-  if (!transfer_list.takeOneLine(&version)) {
+  if (unlikely(!transfer_list.takeOneLine(&version))) {
     throw TextFileError(transfer_list, "Failed to read version");
   }
   switch (version) {
@@ -269,9 +280,10 @@ void TransferList::parse(const std::filesystem::path &transfer_list_file) {
     ABORT_PARSING_IF(transfer_list, split_line.size() != 2);
     nums = parseRanges(split_line[1]);
     ABORT_PARSING_IF(transfer_list, nums.empty());
+    const auto command = toOperations(split_line[0]);
 
     for (size_t i = 0; i < nums.size(); i += 2) {
-      commands.emplace(toOperations(split_line[0]),
+      commands.emplace(command,
                        TransferList::ByteSegments(nums[i], nums[i + 1]));
     }
   }
@@ -325,7 +337,7 @@ public:
     // Open the input file in binary mode
     std::ifstream file(file_path, std::ios::binary | std::ios::ate);
 
-    if (!file.is_open()) {
+    if (unlikely(!file.is_open())) {
       std::cerr << "Error opening input file: " << file_path << std::endl;
       return false;
     }
@@ -337,7 +349,7 @@ public:
     std::vector<uint8_t> compressed_data(file_size);
     file.read(reinterpret_cast<char *>(compressed_data.data()), file_size);
 
-    if (!file) {
+    if (unlikely(!file)) {
       std::cerr << "Error reading input file: " << file_path << std::endl;
       return false;
     }
@@ -345,14 +357,14 @@ public:
     // Initialize the Brotli decoder
     BrotliDecoderState *state =
         BrotliDecoderCreateInstance(nullptr, nullptr, nullptr);
-    if (!state) {
+    if (unlikely(!state)) {
       std::cerr << "Error creating Brotli decoder state." << std::endl;
       return false;
     }
 
     // Prepare output file
     std::ofstream output(output_file, std::ios::binary);
-    if (!output.is_open()) {
+    if (unlikely(!output.is_open())) {
       std::cerr << "Error opening output file: " << output_file << std::endl;
       BrotliDecoderDestroyInstance(state);
       return false;
@@ -429,7 +441,7 @@ int main(int argc, const char *argv[]) {
 
   // Scheme 2. The user provides a directory and filename
   else if (const std::filesystem::path dirObj = argv[1];
-      std::filesystem::is_directory(dirObj)) {
+           std::filesystem::is_directory(dirObj)) {
     const std::string commonPrefix = argv[2];
     transfer_list_file = dirObj / (commonPrefix + ".transfer.list");
     new_dat_file = dirObj / (commonPrefix + ".new.dat");
@@ -493,13 +505,13 @@ int main(int argc, const char *argv[]) {
   }
 
   std::ofstream output(output_img, std::ios::binary);
-  if (!output) {
+  if (unlikely(!output)) {
     std::cerr << "Error: Could not open file " << output_img << std::endl;
     return EXIT_FAILURE;
   }
 
   std::ifstream input_dat(new_dat_file, std::ios::binary);
-  if (!input_dat) {
+  if (unlikely(!input_dat)) {
     std::cerr << "Error: Could not open file " << new_dat_file << std::endl;
     return EXIT_FAILURE;
   }
