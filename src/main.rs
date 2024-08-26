@@ -24,28 +24,26 @@ struct ByteSegments {
     end: FileSizeT,
 }
 
-impl ByteSegments {
-    fn write_to_file(&self, input: &mut dyn Read, output: &mut dyn Write) -> io::Result<()> {
-        let block_count = self.end - self.begin;
-        println!("Copying {} blocks into position {}...", block_count, self.begin);
-        
-        for _ in 0..block_count {
-            let mut buffer = vec![0u8; BLOCK_SIZE];
-            input.read_exact(&mut buffer)?;
-            output.write_all(&buffer)?;
-        }
-        
-        Ok(())
-    }
+impl ByteSegments {fn write_to_file(&self, input: &mut dyn Read, output: &mut File) -> io::Result<()> {
+    let block_count = self.end - self.begin;
+    println!("Copying {} blocks into position {}...", block_count, self.begin);
+    
+    // Seek to the correct position in the output file
+    output.seek(SeekFrom::Start((self.begin * BLOCK_SIZE) as u64))?;
 
-    fn size(&self) -> FileSizeT {
-        self.end - self.begin
+    for _ in 0..block_count {
+        let mut buffer = vec![0u8; BLOCK_SIZE];
+        input.read_exact(&mut buffer)?;
+        output.write_all(&buffer)?;
     }
+    
+    Ok(())
+}
+
 }
 
 #[derive(Debug)]
 struct TransferList {
-    version: u32,
     commands: BTreeMap<Command, Vec<ByteSegments>>,
 }
 
@@ -88,7 +86,7 @@ impl TransferList {
             }
         }
         
-        Ok(Self { version, commands })
+        Ok(Self { commands })
     }
     
     fn to_operations(command: &str) -> Result<Command, Box<dyn Error>> {
