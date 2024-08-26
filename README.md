@@ -1,0 +1,44 @@
+# sdat2img
+Convert sparse Android data image (.dat) into filesystem ext4 image (.img)
+
+This is a Rust equivalent of the original sdat2img tool, which was originally written in Python by xpirt, luxi78, and howellzhu.
+
+## Requirements
+None for now
+
+## Build
+Quite straightforward as it uses cargo.
+
+## Usage
+```
+./sdat2img <transfer_list> <system_new_file> [system_img]
+```
+- `<transfer_list>` = input, system.transfer.list from rom zip
+- `<system_new_file>` = input, system.new.dat from rom zip
+- `[system_img]` = output ext4 raw image file
+
+Or for lazy people:
+```
+./sdat2img <directory/to/extracted> <partition_name> [out_filename.img]
+```
+- `<directory/to/extracted>` = if you extract ROM zip to a folder, point to the directory
+- `<partition_name>` = Like system, vendor, etc...
+- `[out_filename.img]` = Optional output path of ext4 RAW image
+
+The program guesses the file names from the supplied directory and acts same as the first usage.
+
+## Example
+This is a simple example on a Linux system: 
+```
+~$ ./sdat2img vendor.transfer.list vendor.new.dat vendor.img
+```
+
+- OR
+
+```
+~$ ./sdat2img LineageExtracted/ system
+```
+Where LineageExtracted/ contains `system.new.dat` `system.transfer.list` and it would output to LineageExtracted/system.img (as inferred)
+
+## Performance
+- This is even faster than the C++ implementation
