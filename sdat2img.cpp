@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -20,11 +22,20 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #ifdef HAVE_BROTLI
 #include <brotli/decode.h>
+#endif
+
+#if defined _POSIX_C_SOURCE && _POSIX_C_SOURCE >= 200112L
+#define HAS_FADVISE
+#endif
+
+#ifdef HAS_FADVISE
+#include <fcntl.h>
 #endif
 
 constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
@@ -459,6 +470,18 @@ int main(int argc, const char *argv[]) {
   else {
     usage(argv[0]);
   }
+
+#ifdef HAS_FADVISE
+  int fd = open(new_dat_file.c_str(), O_RDONLY);
+  if (fd != -1) {
+    int rc =
+        posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL | POSIX_FADV_WILLNEED);
+    if (rc != 0) {
+      std::cerr << "Warning: Failed to set file advise: " << strerror(errno) << std::endl;
+    }
+    close(fd);
+  }
+#endif
 
 #ifdef HAVE_BROTLI
   BrotliManager brotli_manager(new_dat_file);
