@@ -22,7 +22,6 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -36,6 +35,7 @@
 
 #ifdef HAS_FADVISE
 #include <fcntl.h>
+#include <unistd.h>
 #endif
 
 constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
