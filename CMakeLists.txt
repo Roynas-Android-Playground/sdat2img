@@ -42,3 +42,5 @@ if(LTO_SUPPORTED)
 else()
     message(STATUS "IPO / LTO not supported: <${LTO_ERROR}>")
 endif()
+
+install(TARGETS ${EXECUTABLE_NAME} LIBRARY DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
