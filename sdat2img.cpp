@@ -40,7 +40,7 @@
 
 constexpr static std::string_view DEFAULT_OUTPUT = "system.img";
 constexpr static int BLOCK_SIZE = 4096;
-using FileSizeT = size_t;
+using FileSizeT = std::fstream::off_type;
 
 // Define likely/unlikely based on the compiler used
 // FOR MAX PERFORMANCE
@@ -80,14 +80,14 @@ struct TransferList {
       }
     }
 
-    FileSizeT end() const noexcept { return _end; }
-    FileSizeT begin() const noexcept { return _begin; }
-    FileSizeT size() const noexcept { return _end - _begin; }
+    [[nodiscard]] FileSizeT end() const noexcept { return _end; }
+    [[nodiscard]] FileSizeT begin() const noexcept { return _begin; }
+    [[nodiscard]] FileSizeT size() const noexcept { return _end - _begin; }
   };
 
 private:
   // Version of the transfer.list scheme.
-  int version;
+  int version{};
   // Commands list
   OperationsList commands;
 
@@ -137,12 +137,12 @@ public:
 struct TextFile {
 private:
   std::ifstream file;
-  int line_num;
+  int line_num{};
   std::filesystem::path path;
 
 public:
   explicit TextFile(const std::filesystem::path &path)
-      : file(path), line_num(0), path(path) {
+      : file(path), path(path) {
     if (unlikely(!file.is_open())) {
       throw IOException(path, "open");
     }
@@ -228,7 +228,7 @@ std::vector<FileSizeT> parseRanges(const std::string &src) {
 
   std::transform(src_set.begin(), src_set.end(), std::back_inserter(ret),
                  [&src_set](const auto &src) {
-                   FileSizeT num;
+                   FileSizeT num = 0;
                    std::stringstream ss(src);
                    if (unlikely(!(ss >> num))) {
                      throw std::invalid_argument(
@@ -432,7 +432,7 @@ private:
 
 int main(int argc, const char *argv[]) {
   std::filesystem::path transfer_list_file, new_dat_file, output_img;
-  int block_count;
+  int block_count = 0;
   std::error_code ec;
 
   if (argc != 4 && argc != 3) {
@@ -471,13 +471,15 @@ int main(int argc, const char *argv[]) {
     usage(argv[0]);
   }
 
+  typedef const int cint;
 #ifdef HAS_FADVISE
-  int fd = open(new_dat_file.c_str(), O_RDONLY);
+  cint fd = open(new_dat_file.c_str(), O_RDONLY);
   if (fd != -1) {
-    int rc =
+    cint rc =
         posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL | POSIX_FADV_WILLNEED);
     if (rc != 0) {
-      std::cerr << "Warning: Failed to set file advise: " << strerror(errno) << std::endl;
+      std::cerr << "Warning: Failed to set file advise: " << strerror(errno)
+                << std::endl;
     }
     close(fd);
   }
